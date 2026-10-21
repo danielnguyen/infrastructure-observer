@@ -130,7 +130,10 @@ class RealDockerIntegrationTests(unittest.TestCase):
         deadline = time.monotonic() + 12
         while time.monotonic() < deadline:
             if cls.api.poll() is not None:
-                raise RuntimeError("unprivileged API process exited during startup")
+                diagnostic = cls.api.stderr.read(4096).decode("utf-8", errors="replace")
+                raise RuntimeError(
+                    "unprivileged API process exited during startup: " + diagnostic[-1400:]
+                )
             try:
                 if cls._request("/v1/health")[0] == 200:
                     break
