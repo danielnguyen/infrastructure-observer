@@ -116,14 +116,21 @@ class RealDockerIntegrationTests(unittest.TestCase):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as port_socket:
             port_socket.bind(("127.0.0.1", 0))
             cls.port = port_socket.getsockname()[1]
+        # GitHub's runner checkout may not be traversable by a separate OS user.
+        # Stage root-owned application code under the private test directory.
+        shutil.copytree(
+            Path(__file__).resolve().parents[1] / "infrastructure_observer",
+            cls.folder / "infrastructure_observer",
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
         env = os.environ.copy()
-        env["PYTHONPATH"] = str(Path(__file__).resolve().parents[1])
+        env["PYTHONPATH"] = str(cls.folder)
         cls.api = subprocess.Popen(
             ["runuser", "-u", "nobody", "--", sys.executable, "-m",
              "infrastructure_observer.service", "api", "--gateway-socket", socket_path,
              "--listen-ip", "127.0.0.1", "--port", str(cls.port),
              "--tls-cert", str(cert), "--tls-key", str(key), "--token-file", str(token)],
-            cwd=str(Path(__file__).resolve().parents[1]), env=env,
+            cwd=str(cls.folder), env=env,
             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         )
         cls.addClassCleanup(cls._stop_api)
