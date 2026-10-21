@@ -1,29 +1,33 @@
 # Infrastructure Observer
 
-An HTTP interface for bounded container inventory, container metadata, and approved-project diagnostic logs. The application has no general-purpose Docker proxy endpoint or mutation API.
+A small service for bounded container inventory, container metadata, and approved-project diagnostic logs. The interface exposes no Docker administration or arbitrary-command endpoints.
 
-## Repository layout
+## Components
 
-- `infrastructure_observer/` — observation HTTP handlers and constrained Docker Engine reader
-- `tests/` — synthetic authorization and Unix-socket tests
-- `planning/` — architecture decisions, security evaluation, and implementation plans
+- `infrastructure_observer/observer.py` — inventory, metadata projection and project-scoped log policy
+- `infrastructure_observer/docker_gateway.py` — constrained Docker Engine client
+- `infrastructure_observer/service.py` — local Unix-socket reader service and authenticated TLS API
+- `tests/` — synthetic Docker and service-boundary tests
+- `planning/` — security assessments, implementation decisions and follow-on work
 
-## Run tests
+One codebase supports two service roles on a host: a trusted Docker reader behind a private Unix socket, and a separate unprivileged HTTPS API. The API never needs access to the Docker socket.
+
+## Tests
+
+Requires Python 3.11 or later; uses only the standard library. An optional TLS test invokes locally installed OpenSSL to create a temporary test certificate.
 
 ```sh
 python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-The in-memory test server can be exercised locally without a Docker daemon:
+An in-memory fixture server is also available on loopback:
 
 ```sh
 python3 -m infrastructure_observer.observer --offline-fixture --host example-host-a
 ```
 
-The test server listens on loopback and returns synthetic data. No Docker socket is accessed.
+## Security and deployment status
 
-## Deployment security
+The code enforces restricted API operations and separates network access from the Docker reader. **It is not yet approved for production deployment.** A process with unrestricted Docker socket access retains host-administrative authority if compromised. Real-world container isolation, private network policies, certificate and credential provisioning, Docker compatibility and Portainer stack identity still require independent validation.
 
-The Docker reader has access only to defined GET routes **at its API boundary**, but a process holding an unrestricted Docker socket still has powerful Docker and host privileges if compromised. The repository does not yet implement an authenticated LAN API, process isolation, production stack configuration, or real-engine compatibility testing. **Do not deploy against a production Docker daemon.** See [engineering planning](planning/README.md) for the safety requirements and remaining work.
-
-This public repository uses synthetic host and project identifiers. Real addresses, permitted project mappings, log data, and credentials must remain outside source control.
+Details and acceptance gates are in [planning/IPC_TRUST_BOUNDARY.md](planning/IPC_TRUST_BOUNDARY.md). Do not store real hostnames, IP addresses, log contents, credentials or stack inventories in this public repository.

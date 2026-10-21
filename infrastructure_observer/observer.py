@@ -7,7 +7,6 @@ import json
 import re
 from urllib.parse import urlsplit, parse_qsl
 
-HOST_ALLOWLIST = {"example-host-a": frozenset({"approved-project"}), "example-host-b": frozenset()}
 PROJECT_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 CONTAINER_ID_RE = re.compile(r"^[a-f0-9]{64}$")
 REDACT = [
@@ -99,11 +98,16 @@ def redact_line(s: str) -> str:
     return value
 
 class Observer:
-    def __init__(self, host: str, provider: FixtureProvider):
-        if host not in HOST_ALLOWLIST:
-            raise ValueError("unknown host")
+    def __init__(self, host: str, provider, approved_log_projects: frozenset[str] = frozenset()):
+        if not isinstance(host, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,62}", host):
+            raise ValueError("invalid host")
+        if not isinstance(approved_log_projects, frozenset) or any(
+            not isinstance(project, str) or not PROJECT_RE.fullmatch(project) for project in approved_log_projects
+        ):
+            raise ValueError("invalid project policy")
         self.host = host
         self.provider = provider
+        self.approved_log_projects = approved_log_projects
 
     def handle(self, method: str, path: str) -> tuple[int, dict]:
         try:
@@ -128,7 +132,8 @@ class Observer:
             args[key] = value
         if u.path == "/v1/health":
             if args: raise Denied("BAD_QUERY", 400)
-            return 200, {"host": self.host, "mode": "offline-fixture", "ready": True}
+            return 200, {"host": self.host, "source": getattr(self.provider, "source", "synthetic-fixture"),
+                         "gateway_reachable": True, "docker_checked": False}
         containers = self.provider.list_containers()
         if len(containers) > 1000: raise Denied("INVENTORY_LIMIT", 503)
         # Exact, fully qualified IDs. Duplicate IDs cause fail-closed instead of silently selecting one.
@@ -154,7 +159,7 @@ class Observer:
         if match:
             name = match.group(1)
             # Authorization precedes any per-container log collection.
-            if name not in HOST_ALLOWLIST[self.host]:
+            if name not in self.approved_log_projects:
                 raise Denied("LOG_PROJECT_DENIED")
             if set(args) != {"since_minutes", "limit"}:
                 raise Denied("BAD_QUERY", 400)
@@ -208,7 +213,7 @@ def run_local_fixture_server(observer: Observer, port: int) -> None:
 if __name__ == "__main__":
     p = argparse.ArgumentParser(description="Serve in-memory container fixtures on loopback.")
     p.add_argument("--offline-fixture", action="store_true", required=True)
-    p.add_argument("--host", choices=sorted(HOST_ALLOWLIST), required=True)
+    p.add_argument("--host", required=True)
     p.add_argument("--port", type=int, default=8765)
     opts = p.parse_args()
     print("Serving in-memory fixtures at 127.0.0.1", flush=True)
