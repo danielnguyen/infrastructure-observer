@@ -1,4 +1,4 @@
-"""Mocked Docker tests only: never connect to a real Docker socket."""
+"""Validate Docker route restrictions and Unix transport behavior."""
 import json
 import os
 import socketserver
@@ -7,11 +7,11 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler
 
-from docker_gateway import (
+from infrastructure_observer.docker_gateway import (
     API_PREFIX, MAX_JSON_BYTES, MAX_LOG_BYTES, DockerGatewayProvider,
     DockerUnixTransport, ObservationFailed, _allowed_engine_route, _decode_logs,
 )
-from observer import Observer, project_of, projection
+from infrastructure_observer.observer import Observer, project_of, projection
 
 
 def fixture(i, project, **kwargs):

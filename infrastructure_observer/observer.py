@@ -1,4 +1,4 @@
-"""Offline-only infrastructure observer prototype. NEVER connect this to production Docker."""
+"""Bounded HTTP endpoints for container inventory and diagnostics."""
 from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
@@ -20,7 +20,7 @@ class Denied(Exception):
         self.code, self.status = code, status
 
 class FixtureProvider:
-    """No Docker client, no socket, no subprocess. Data passed by caller."""
+    """In-memory provider for deterministic testing and local examples."""
     def __init__(self, containers: list[dict], logs: dict[str, list[str]] | None = None):
         self.containers = containers
         self.log_lines = logs or {}
@@ -206,10 +206,10 @@ def run_local_fixture_server(observer: Observer, port: int) -> None:
         server.serve_forever()
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="OFFLINE FIXTURE SERVER ONLY. NOT FOR PRODUCTION.")
+    p = argparse.ArgumentParser(description="Serve in-memory container fixtures on loopback.")
     p.add_argument("--offline-fixture", action="store_true", required=True)
     p.add_argument("--host", choices=sorted(HOST_ALLOWLIST), required=True)
     p.add_argument("--port", type=int, default=8765)
     opts = p.parse_args()
-    print("OFFLINE FIXTURE ONLY; zero real Docker access; bound to 127.0.0.1", flush=True)
+    print("Serving in-memory fixtures at 127.0.0.1", flush=True)
     run_local_fixture_server(Observer(opts.host, FixtureProvider([])), opts.port)

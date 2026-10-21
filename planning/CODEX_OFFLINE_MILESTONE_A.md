@@ -1,6 +1,6 @@
 # Codex task — infrastructure-observer MVP, offline contract only
 
-Implement **Milestone A only** of `BOUNDARY_AND_OFFLINE_BUILD.md`.
+Implement **Milestone A only** of `planning/BOUNDARY_AND_OFFLINE_BUILD.md`.
 
 ## Scope
 

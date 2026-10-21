@@ -1,5 +1,5 @@
 import unittest
-from observer import Observer, FixtureProvider, projection
+from infrastructure_observer.observer import Observer, FixtureProvider, projection
 
 
 def c(n, project=None, **kw):

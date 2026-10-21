@@ -1,9 +1,4 @@
-"""Milestone B: narrow Docker reader. NOT production-ready and has no public listener.
-
-The reader itself is highly trusted: holding /var/run/docker.sock grants extensive
-Docker/host authority if its process is compromised. Its *requests* are fixed and
-read-only; that is not equivalent to a kernel-enforced read-only Docker credential.
-"""
+"""Constrained Docker Engine read operations over a Unix socket."""
 from __future__ import annotations
 
 import http.client
@@ -13,9 +8,9 @@ import socket
 import time
 from urllib.parse import parse_qsl, urlsplit
 
-from observer import CONTAINER_ID_RE, PROJECT_RE, project_of
+from .observer import CONTAINER_ID_RE, PROJECT_RE, project_of
 
-API_PREFIX = "/v1.41"  # Conservative API version; actual host compatibility unverified.
+API_PREFIX = "/v1.41"
 MAX_CONTAINERS = 200
 MAX_JSON_BYTES = 1024 * 1024
 MAX_LOG_BYTES = 65536
