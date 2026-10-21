@@ -1,13 +1,20 @@
-# Offline infrastructure observer protocol prototype
+# Offline infrastructure observer proof of concept
 
-**Not deployable. No Docker, Portainer, PAB, SSH or production connectivity.** This is a test-only protocol boundary demo implemented using Python standard library. It has no Docker socket integration, TLS, authentication or production-ready Docker privilege controls. It must not be exposed beyond local loopback and must never be used with production data.
+**Not production-ready. Do not point this code at either real Docker host.**
+
+The API in `observer.py` still runs only against explicitly supplied synthetic fixtures. The offline executable binds `127.0.0.1`, not a LAN interface.
+
+`docker_gateway.py` is a *library only* for evaluating narrow Docker reads. It can contact a Unix Docker HTTP socket if another application explicitly instantiates it, which is prohibited against production at this stage. It deliberately contains no command-line entry point, daemon, listener or deployment instructions.
+
+Test without Docker or any network daemon:
 
 ```bash
+cd offline-prototype
 python3 -m unittest discover -s . -p 'test_*.py' -v
-python3 observer.py --offline-fixture --host example-host-a --port 8765
-# In another terminal: curl http://127.0.0.1:8765/v1/containers
 ```
 
-The CLI uses an *empty synthetic fixture* and deliberately returns no actual containers. Unit tests inject synthetic fixture records only. No background polling, DB, additional dependencies, or autonomous capabilities.
+Tests use JSON fixtures and a disposable fake Unix-domain HTTP server. The fake daemon is not Docker Engine and does not establish live-engine compatibility.
 
-This first slice tests proposed routes, host/project authorization, narrow field projections, query bounds and error handling. Its redaction is heuristic, so enabling real logs later requires a separate confidentiality decision. The future Docker gate, authentication and TLS, and PAB integration are separate milestones described in `../BOUNDARY_AND_OFFLINE_BUILD.md`.
+The reader's allowed Docker access is limited to fixed list/inspect/log GET endpoint shapes. Inspect data stays inside the trusted reader and is projected onto an explicit safe field schema before becoming a response. Log reads are restricted to operator-verified Compose projects and recheck membership at the time of retrieval. Unknown log secrets may still escape heuristic redaction.
+
+For the security analysis, especially the root-equivalent **Docker socket compromise risk** and deployment blockers, see `../MILESTONE_B_TRUST_REVIEW.md`.
