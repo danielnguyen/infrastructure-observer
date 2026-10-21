@@ -7,3 +7,4 @@ Implementation milestones, engineering briefs, and security feasibility decision
 - [Docker access trust review](MILESTONE_B_TRUST_REVIEW.md)
 
 These documents describe design assumptions and unresolved deployment requirements; they do not authorize connecting to production Docker or changing either host.
+- [Local gateway/API trust-boundary review](IPC_TRUST_BOUNDARY.md)

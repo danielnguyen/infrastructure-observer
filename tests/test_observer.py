@@ -21,7 +21,7 @@ class BoundaryTests(unittest.TestCase):
         self.provider = FixtureProvider([self.ccp,self.fin,self.media,self.stopped], {
             self.ccp["Id"]: ["started", "token=ABC123", "Authorization: Bearer mysecret"],
             self.fin["Id"]: ["private financial transaction"]})
-        self.nas = Observer("example-host-a",self.provider)
+        self.nas = Observer("example-host-a",self.provider, frozenset({"approved-project"}))
         self.uni = Observer("example-host-b",self.provider)
 
     def call(self, api, path, method="GET"):
@@ -54,13 +54,13 @@ class BoundaryTests(unittest.TestCase):
     def test_second_host_denied_all_logs(self):
         self.assertEqual(self.call(self.uni,"/v1/projects/approved-project/logs?since_minutes=5&limit=20")[0],403)
     def test_missing_project_label_denies_logs(self):
-        api=Observer("example-host-a",FixtureProvider([c(1)]))
+        api=Observer("example-host-a",FixtureProvider([c(1)]), frozenset({"approved-project"}))
         self.assertEqual(self.call(api,"/v1/projects/approved-project/logs?since_minutes=5&limit=20")[0],403)
     def test_wrong_or_ambiguous_label_denies_logs(self):
         r=c(1,"LLM-Memory")
-        api=Observer("example-host-a",FixtureProvider([r]))
+        api=Observer("example-host-a",FixtureProvider([r]), frozenset({"approved-project"}))
         self.assertEqual(self.call(api,"/v1/projects/approved-project/logs?since_minutes=5&limit=20")[0],403)
-        api=Observer("example-host-a",FixtureProvider([c(1,"approved-project"),c(1,"finances")]))
+        api=Observer("example-host-a",FixtureProvider([c(1,"approved-project"),c(1,"finances")]), frozenset({"approved-project"}))
         self.assertEqual(self.call(api,"/v1/projects/approved-project/logs?since_minutes=5&limit=20")[0],503)
     def test_no_mutations(self):
         for method in ("POST","DELETE","PUT","PATCH"):
@@ -79,7 +79,7 @@ class BoundaryTests(unittest.TestCase):
     def test_errors_are_partial_not_healthy(self):
         class Broken(FixtureProvider):
             def list_containers(self): raise RuntimeError("SECRET failure")
-        code, body = self.call(Observer("example-host-a",Broken([])),"/v1/containers")
+        code, body = self.call(Observer("example-host-a",Broken([]), frozenset({"approved-project"})),"/v1/containers")
         self.assertEqual(code,503)
         self.assertEqual(body["error"],"OBSERVATION_UNAVAILABLE")
         self.assertTrue(body["partial"])

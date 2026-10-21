@@ -57,7 +57,7 @@ class GatewayTests(unittest.TestCase):
         self.other = fixture(2, "private-project")
         self.transport = FakeDockerTransport([self.approved, self.other])
         self.provider = DockerGatewayProvider(self.transport, frozenset({"approved-project"}), clock=lambda: 1700000000)
-        self.obs = Observer("example-host-a", self.provider)
+        self.obs = Observer("example-host-a", self.provider, frozenset({"approved-project"}))
 
     def test_inventory_only_three_fixed_get_families(self):
         code, result = self.obs.handle("GET", "/v1/containers")
