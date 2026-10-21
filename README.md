@@ -1,18 +1,29 @@
-# Infrastructure Observer (offline prototype)
+# Infrastructure Observer
 
-Minimal, security-conscious observer API for reporting Docker container inventory and approved project logs to an aggregator such as PAB.
+An HTTP interface for bounded container inventory, container metadata, and approved-project diagnostic logs. The application has no general-purpose Docker proxy endpoint or mutation API.
 
-**Current state: offline fixture prototype only. Not deployable.** This repository has no production Docker adapter, Docker daemon credentials, Portainer connectivity, authentication/TLS or production deployment configuration.
+## Repository layout
 
-- [Boundary and offline build brief](BOUNDARY_AND_OFFLINE_BUILD.md)
-- [Offline milestone task](CODEX_OFFLINE_MILESTONE_A.md)
-- [Prototype and tests](offline-prototype/README.md)
+- `infrastructure_observer/` — observation HTTP handlers and constrained Docker Engine reader
+- `tests/` — synthetic authorization and Unix-socket tests
+- `planning/` — architecture decisions, security evaluation, and implementation plans
 
-Run synthetic tests:
+## Run tests
 
 ```sh
-cd offline-prototype
-python3 -m unittest discover -s . -p 'test_*.py' -v
+python3 -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
-Host identifiers and project names in this public repo are illustrative. Keep real host addresses, service inventories, local permissions and credentials private. Do not mount Docker sockets or deploy this prototype to real servers. The Docker daemon privilege boundary requires its own disposable-environment validation before production use.
+The in-memory test server can be exercised locally without a Docker daemon:
+
+```sh
+python3 -m infrastructure_observer.observer --offline-fixture --host example-host-a
+```
+
+The test server listens on loopback and returns synthetic data. No Docker socket is accessed.
+
+## Deployment security
+
+The Docker reader has access only to defined GET routes **at its API boundary**, but a process holding an unrestricted Docker socket still has powerful Docker and host privileges if compromised. The repository does not yet implement an authenticated LAN API, process isolation, production stack configuration, or real-engine compatibility testing. **Do not deploy against a production Docker daemon.** See [engineering planning](planning/README.md) for the safety requirements and remaining work.
+
+This public repository uses synthetic host and project identifiers. Real addresses, permitted project mappings, log data, and credentials must remain outside source control.

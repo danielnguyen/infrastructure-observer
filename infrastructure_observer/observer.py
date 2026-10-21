@@ -1,4 +1,4 @@
-"""Offline-only infrastructure observer prototype. NEVER connect this to production Docker."""
+"""Bounded HTTP endpoints for container inventory and diagnostics."""
 from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
@@ -20,7 +20,7 @@ class Denied(Exception):
         self.code, self.status = code, status
 
 class FixtureProvider:
-    """No Docker client, no socket, no subprocess. Data passed by caller."""
+    """In-memory provider for deterministic testing and local examples."""
     def __init__(self, containers: list[dict], logs: dict[str, list[str]] | None = None):
         self.containers = containers
         self.log_lines = logs or {}
@@ -33,10 +33,16 @@ class FixtureProvider:
 
 
 def project_of(record: dict) -> str | None:
-    labels = record.get("Labels")
-    if not isinstance(labels, dict):
+    cfg = record.get("Config", {})
+    nested = cfg.get("Labels") if isinstance(cfg, dict) else None
+    summary = record.get("Labels")
+    # A full inspect uses Config.Labels; a list summary uses top-level Labels.
+    # Inconsistent labels must not become log authorization evidence.
+    nested_project = nested.get("com.docker.compose.project") if isinstance(nested, dict) else None
+    summary_project = summary.get("com.docker.compose.project") if isinstance(summary, dict) else None
+    if nested_project is not None and summary_project is not None and nested_project != summary_project:
         return None
-    value = labels.get("com.docker.compose.project")
+    value = nested_project if nested_project is not None else summary_project
     return value if isinstance(value, str) and PROJECT_RE.fullmatch(value) else None
 
 
@@ -48,13 +54,28 @@ def projection(r: dict, extended: bool = False) -> dict:
     cfg = r.get("Config", {})
     if not isinstance(cfg, dict):
         cfg = {}
-    ports = r.get("Ports", [])
-    if not isinstance(ports, list):
-        ports = []
+    ports = r.get("Ports")
     safe_ports = []
-    for p in ports[:32]:
-        if isinstance(p, dict):
-            safe_ports.append({k: p[k] for k in ("PrivatePort", "PublicPort", "Type") if k in p and isinstance(p[k], (int, str))})
+    if isinstance(ports, list):
+        for p in ports[:32]:
+            if isinstance(p, dict):
+                safe_ports.append({k: p[k] for k in ("PrivatePort", "PublicPort", "Type") if k in p and isinstance(p[k], (int, str))})
+    else:
+        network = r.get("NetworkSettings", {})
+        ports_map = network.get("Ports", {}) if isinstance(network, dict) else {}
+        if isinstance(ports_map, dict):
+            for key, bindings in list(sorted(ports_map.items()))[:32]:
+                m = re.fullmatch(r"([0-9]{1,5})/(tcp|udp)", key)
+                if not m or not 0 < int(m.group(1)) <= 65535:
+                    continue
+                if not isinstance(bindings, list):
+                    continue
+                for binding in bindings[:4]:
+                    if not isinstance(binding, dict):
+                        continue
+                    val = binding.get("HostPort")
+                    if isinstance(val, str) and val.isdigit() and 0 < int(val) <= 65535:
+                        safe_ports.append({"PrivatePort": int(m.group(1)), "PublicPort": int(val), "Type": m.group(2)})
     result = {
         "id": r.get("Id"),
         "name": r.get("Name"),
@@ -115,7 +136,7 @@ class Observer:
         if any(not isinstance(i, str) or not CONTAINER_ID_RE.fullmatch(i) for i in ids) or len(set(ids)) != len(ids):
             raise Denied("AMBIGUOUS_INVENTORY", 503)
         base = {"host": self.host, "observed_at": datetime.now(timezone.utc).isoformat(),
-                "source": "synthetic-fixture", "partial": False}
+                "source": getattr(self.provider, "source", "synthetic-fixture"), "partial": False}
         if u.path == "/v1/containers" and not args:
             return 200, {**base, "containers": [projection(c) for c in containers]}
         if u.path == "/v1/projects" and not args:
@@ -185,10 +206,10 @@ def run_local_fixture_server(observer: Observer, port: int) -> None:
         server.serve_forever()
 
 if __name__ == "__main__":
-    p = argparse.ArgumentParser(description="OFFLINE FIXTURE SERVER ONLY. NOT FOR PRODUCTION.")
+    p = argparse.ArgumentParser(description="Serve in-memory container fixtures on loopback.")
     p.add_argument("--offline-fixture", action="store_true", required=True)
     p.add_argument("--host", choices=sorted(HOST_ALLOWLIST), required=True)
     p.add_argument("--port", type=int, default=8765)
     opts = p.parse_args()
-    print("OFFLINE FIXTURE ONLY; zero real Docker access; bound to 127.0.0.1", flush=True)
+    print("Serving in-memory fixtures at 127.0.0.1", flush=True)
     run_local_fixture_server(Observer(opts.host, FixtureProvider([])), opts.port)
