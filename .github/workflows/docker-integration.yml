@@ -1,0 +1,30 @@
+name: Docker integration
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-docker:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Test application and boundary behavior
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Prepare disposable Docker Engine fixtures
+        run: |
+          sudo docker info --format '{{.ServerVersion}}'
+          sudo docker pull busybox:1.36.1
+      - name: Test isolated services against real Docker
+        env:
+          INFRA_OBSERVER_REAL_DOCKER: '1'
+        run: sudo --preserve-env=INFRA_OBSERVER_REAL_DOCKER python3 -m unittest tests.test_engine_integration -v
