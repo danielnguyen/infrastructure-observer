@@ -100,11 +100,19 @@ def assert_reader_recovers_from_crash() -> None:
     before = inspect('reader')
     cid = before['Id']
     count = before['RestartCount']
+    # The host harness must signal the container's init from outside its PID namespace.
+    host_pid = before["State"]["Pid"]
+    if not isinstance(host_pid, int) or host_pid <= 1:
+        raise AssertionError("invalid disposable container init PID")
+    current = inspect('reader')
+    if current["Id"] != cid or current["State"]["Pid"] != host_pid:
+        raise AssertionError("disposable reader PID changed before crash injection")
     attempt = subprocess.run(
-        ['sudo', 'docker', 'exec', cid, 'python3', '-c',
-         "import os,signal; os.kill(1,signal.SIGKILL)"],
+        ['sudo', 'kill', '-KILL', str(host_pid)],
         text=True, capture_output=True, timeout=12, check=False,
     )
+    if attempt.returncode:
+        raise AssertionError(f'failed to terminate disposable reader: {attempt.stderr[-200:]}')
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
         try:
