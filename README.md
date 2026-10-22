@@ -30,6 +30,8 @@ python3 -m infrastructure_observer.observer --offline-fixture --host example-hos
 
 The [Compose stack candidate](deployment/README.md) runs the trusted Docker reader and unprivileged HTTPS API as separate services sharing a private IPC volume. It is exercised on disposable CI runners, not authorized for production use. The rootful Docker reader's residual authority remains a security acceptance gate.
 
+The authenticated API uses a bounded, in-memory request limiter (24-request burst, then one new request per second). A rejected observation receives HTTP 429; callers should not aggressively retry.
+
 ## Security and deployment status
 
 The code enforces restricted API operations and separates network access from the Docker reader. **It is not yet approved for production deployment.** A process with unrestricted Docker socket access retains host-administrative authority if compromised. Real-world container isolation, private network policies, certificate and credential provisioning, Docker compatibility and Portainer stack identity still require independent validation.
