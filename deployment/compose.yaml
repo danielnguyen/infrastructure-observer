@@ -1,0 +1,76 @@
+name: infrastructure-observer
+services:
+  reader:
+    image: ${OBSERVER_IMAGE:?Set an explicitly built image reference}
+    entrypoint: ["python3", "-m", "infrastructure_observer.ipc_init"]
+    command:
+      - gateway
+      - --socket
+      - /run/observer-ipc/reader.sock
+      - --docker-socket
+      - /var/run/docker.sock
+      - --host
+      - ${OBSERVER_HOST:?Set a non-sensitive host identifier}
+      - --log-projects
+      - ${OBSERVER_LOG_PROJECTS:-}
+    user: "0:65532"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.50
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: /var/run/docker.sock
+        target: /var/run/docker.sock
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: observer-ipc
+        target: /run/observer-ipc
+        volume:
+          nocopy: true
+  api:
+    image: ${OBSERVER_IMAGE:?Set an explicitly built image reference}
+    command:
+      - api
+      - --gateway-socket
+      - /run/observer-ipc/reader.sock
+      - --listen-ip
+      - 0.0.0.0
+      - --port
+      - "8765"
+      - --tls-cert
+      - /run/observer-credentials/cert.pem
+      - --tls-key
+      - /run/observer-credentials/key.pem
+      - --token-file
+      - /run/observer-credentials/token
+    user: "65532:65532"
+    depends_on: [reader]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 64
+    mem_limit: 128m
+    cpus: 0.50
+    restart: unless-stopped
+    ports:
+      - "${OBSERVER_BIND_IP:?Set an explicit LAN or loopback bind address}:8765:8765"
+    volumes:
+      - type: volume
+        source: observer-ipc
+        target: /run/observer-ipc
+        read_only: true
+      - type: bind
+        source: ${OBSERVER_CREDENTIALS_DIR:?Set an existing host credentials directory}
+        target: /run/observer-credentials
+        read_only: true
+        bind:
+          create_host_path: false
+volumes:
+  observer-ipc:
