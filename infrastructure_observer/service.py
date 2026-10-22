@@ -266,6 +266,7 @@ def main():
     gateway_args.add_argument('--docker-socket', default='/var/run/docker.sock')
     gateway_args.add_argument('--host', required=True)
     gateway_args.add_argument('--log-project', action='append', default=[])
+    gateway_args.add_argument('--log-projects', default='')
     api_args = sub.add_parser('api')
     api_args.add_argument('--gateway-socket', required=True)
     api_args.add_argument('--listen-ip', required=True)
@@ -276,7 +277,12 @@ def main():
     args = parser.parse_args()
 
     if args.service == 'gateway':
-        projects = frozenset(args.log_project)
+        names = list(args.log_project)
+        if args.log_projects:
+            names.extend(args.log_projects.split(','))
+        if len(names) != len(set(names)):
+            parser.error('duplicate approved project')
+        projects = frozenset(names)
         if any(PROJECT_RE.fullmatch(name) is None for name in projects):
             parser.error('invalid approved project name')
         provider = DockerGatewayProvider(DockerUnixTransport(args.docker_socket), projects)

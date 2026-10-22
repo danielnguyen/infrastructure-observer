@@ -1,0 +1,51 @@
+name: Container packaging
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  packaged-stack:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      OBSERVER_IMAGE: infrastructure-observer:ci
+      OBSERVER_HOST: synthetic-ci-host
+      OBSERVER_LOG_PROJECTS: ""
+      OBSERVER_BIND_IP: 127.0.0.1
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Build service image
+        run: sudo docker build -t "$OBSERVER_IMAGE" .
+      - name: Provision temporary credentials
+        run: |
+          set -eu
+          target="$(mktemp -d)"
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 1 \
+            -subj '/CN=localhost' -addext 'subjectAltName=IP:127.0.0.1' \
+            -keyout "$target/key.pem" -out "$target/cert.pem" >/dev/null 2>&1
+          openssl rand -hex 40 > "$target/token"
+          sudo chown -R 65532:65532 "$target"
+          chmod 0700 "$target"
+          chmod 0600 "$target/key.pem" "$target/cert.pem" "$target/token"
+          echo "OBSERVER_CREDENTIALS_DIR=$target" >> "$GITHUB_ENV"
+      - name: Validate and start disposable stack
+        run: |
+          set -eu
+          sudo --preserve-env=OBSERVER_IMAGE,OBSERVER_HOST,OBSERVER_LOG_PROJECTS,OBSERVER_BIND_IP,OBSERVER_CREDENTIALS_DIR docker compose -f deployment/compose.yaml config -q
+          sudo --preserve-env=OBSERVER_IMAGE,OBSERVER_HOST,OBSERVER_LOG_PROJECTS,OBSERVER_BIND_IP,OBSERVER_CREDENTIALS_DIR docker compose -f deployment/compose.yaml up -d
+      - name: Verify isolated containers and authenticated HTTPS
+        run: python3 tests/container_stack_smoke.py
+      - name: Cleanup disposable resources
+        if: always()
+        run: |
+          sudo --preserve-env=OBSERVER_IMAGE,OBSERVER_HOST,OBSERVER_LOG_PROJECTS,OBSERVER_BIND_IP,OBSERVER_CREDENTIALS_DIR docker compose -f deployment/compose.yaml down -v --remove-orphans || true
+          if [ -n "${OBSERVER_CREDENTIALS_DIR:-}" ]; then sudo rm -rf -- "$OBSERVER_CREDENTIALS_DIR"; fi
