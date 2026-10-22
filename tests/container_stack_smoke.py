@@ -35,6 +35,110 @@ def request(path: str, *, authorized: bool = True) -> tuple[int, dict]:
         connection.close()
 
 
+def assert_container_boundaries(reader_id: str, api_id: str) -> None:
+    api_probe = """
+import os, socket, stat
+assert os.geteuid() == 65532
+assert not os.path.exists('/var/run/docker.sock')
+directory = '/run/observer-ipc'
+endpoint = directory + '/reader.sock'
+assert stat.S_IMODE(os.stat(directory).st_mode) == 0o2750
+assert stat.S_IMODE(os.stat(endpoint).st_mode) == 0o660
+for operation in (lambda: os.unlink(endpoint), lambda: os.mkdir(directory + '/unauthorized')):
+    try:
+        operation()
+    except OSError:
+        pass
+    else:
+        raise AssertionError('API identity was able to change the shared IPC mount')
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+try:
+    s.connect('/var/run/docker.sock')
+except OSError:
+    pass
+else:
+    raise AssertionError('API identity could connect to Docker')
+finally:
+    s.close()
+"""
+    reader_probe = """
+import os, socket
+assert os.geteuid() == 0
+assert not os.path.exists('/run/observer-credentials')
+try:
+    fd = os.open('/should-not-be-created', os.O_WRONLY | os.O_CREAT, 0o600)
+except OSError:
+    pass
+else:
+    os.close(fd)
+    raise AssertionError('reader unexpectedly wrote to its root filesystem')
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.settimeout(1)
+try:
+    s.connect(('192.0.2.1', 443))
+except OSError:
+    pass
+else:
+    raise AssertionError('reader unexpectedly accessed the external network')
+finally:
+    s.close()
+"""
+    for service_id, probe in ((api_id, api_probe), (reader_id, reader_probe)):
+        result = subprocess.run(
+            ['sudo', 'docker', 'exec', service_id, 'python3', '-c', probe],
+            text=True, capture_output=True, timeout=15,
+        )
+        if result.returncode:
+            raise AssertionError(
+                f'container security check failed for {service_id}: {result.stderr[-1200:]}'
+            )
+
+
+def assert_reader_recovers_from_crash() -> None:
+    # Docker restart policies require successful initialization before a crash.
+    time.sleep(11)
+    before = inspect('reader')
+    cid = before['Id']
+    count = before['RestartCount']
+    # The host harness must signal the container's init from outside its PID namespace.
+    host_pid = before["State"]["Pid"]
+    if not isinstance(host_pid, int) or host_pid <= 1:
+        raise AssertionError("invalid disposable container init PID")
+    current = inspect('reader')
+    if current["Id"] != cid or current["State"]["Pid"] != host_pid:
+        raise AssertionError("disposable reader PID changed before crash injection")
+    attempt = subprocess.run(
+        ['sudo', 'kill', '-KILL', str(host_pid)],
+        text=True, capture_output=True, timeout=12, check=False,
+    )
+    if attempt.returncode:
+        raise AssertionError(f'failed to terminate disposable reader: {attempt.stderr[-200:]}')
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        try:
+            current = inspect('reader')
+            if current['Id'] == cid and current['RestartCount'] > count:
+                status, body = request('/v1/health')
+                if status == 200 and body['gateway_reachable'] is True:
+                    return
+        except (OSError, subprocess.CalledProcessError, AssertionError, TimeoutError):
+            pass
+        time.sleep(0.5)
+    state = subprocess.run(
+        ['sudo', 'docker', 'inspect', '--format', '{{.State.Status}} {{.State.ExitCode}} {{.State.Error}} {{.RestartCount}}', cid],
+        capture_output=True, text=True, timeout=12,
+    )
+    reader_logs = subprocess.run(
+        ['sudo', 'docker', 'logs', '--tail', '25', cid],
+        capture_output=True, text=True, timeout=12,
+    )
+    raise AssertionError(
+        'reader did not recover after PID 1 termination: '
+        + f'exec_code={attempt.returncode} exec_stderr={attempt.stderr[-200:]} '
+        + f'state={state.stdout[-300:]} logs={reader_logs.stderr[-900:]}'
+    )
+
+
 def main() -> None:
     deadline = time.monotonic() + 45
     while time.monotonic() < deadline:
@@ -62,7 +166,9 @@ def main() -> None:
     assert all(m["Destination"] != "/var/run/docker.sock" for m in api["Mounts"])
     assert reader["HostConfig"]["CapDrop"] == ["ALL"]
     assert api["HostConfig"]["CapDrop"] == ["ALL"]
-    print("Container isolation and HTTPS smoke checks passed")
+    assert_container_boundaries(reader["Id"], api["Id"])
+    assert_reader_recovers_from_crash()
+    print("Container isolation, recovery, and HTTPS smoke checks passed")
 
 
 if __name__ == "__main__":

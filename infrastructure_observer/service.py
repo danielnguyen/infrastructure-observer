@@ -13,6 +13,7 @@ import socketserver
 import ssl
 import stat
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -59,6 +60,30 @@ def _respond(handler: BaseHTTPRequestHandler, status: int, value: dict) -> None:
         handler.wfile.write(raw)
     except OSError:
         pass
+
+
+class RequestLimiter:
+    """Bound observation frequency with constant memory and a monotonic clock."""
+
+    def __init__(self, capacity: int = 24, refill_per_second: float = 1.0, clock=time.monotonic):
+        if not 1 <= capacity <= 1000 or not 0 < refill_per_second <= 1000:
+            raise ValueError('invalid request limit')
+        self.capacity = capacity
+        self.refill_per_second = refill_per_second
+        self.clock = clock
+        self._lock = threading.Lock()
+        self._tokens = float(capacity)
+        self._last = clock()
+
+    def allow(self) -> bool:
+        with self._lock:
+            now = self.clock()
+            self._tokens = min(self.capacity, self._tokens + max(0, now - self._last) * self.refill_per_second)
+            self._last = now
+            if self._tokens < 1:
+                return False
+            self._tokens -= 1
+            return True
 
 
 class _LimitedThreadingMixIn(socketserver.ThreadingMixIn):
@@ -190,12 +215,13 @@ class GatewayClient:
 class AuthenticatedAPIServer(_LimitedThreadingMixIn, HTTPServer):
     """API listener deliberately receives only a GatewayClient, never Docker credentials."""
 
-    def __init__(self, address, gateway: GatewayClient, token: str, max_workers: int = MAX_API_THREADS):
+    def __init__(self, address, gateway: GatewayClient, token: str, max_workers: int = MAX_API_THREADS, limiter: RequestLimiter | None = None):
         if not isinstance(token, str) or len(token) < 32 or any(ch.isspace() for ch in token):
             raise ValueError('API token must be at least 32 non-whitespace characters')
         self._workers = threading.BoundedSemaphore(max_workers)
         self.gateway = gateway
         self.api_token = token
+        self.request_limiter = limiter if limiter is not None else RequestLimiter()
         super().__init__(address, _api_handler())
 
 
@@ -216,7 +242,7 @@ def _api_handler():
             if len(provided) != 1:
                 return False
             value = provided[0]
-            return len(value) < 256 and hmac.compare_digest(value, 'Bearer ' + self.server.api_token)
+            return len(value) <= 263 and hmac.compare_digest(value, 'Bearer ' + self.server.api_token)
 
         def _request(self, method: str):
             if not self._authorized():
@@ -225,6 +251,8 @@ def _api_handler():
                 return _respond(self, 405, {'error': 'METHOD_DENIED'})
             if not permitted_observation_path(self.path):
                 return _respond(self, 404, {'error': 'NOT_FOUND'})
+            if not self.server.request_limiter.allow():
+                return _respond(self, 429, {'error': 'RATE_LIMIT', 'partial': True})
             status, result = self.server.gateway.request(self.path)
             _respond(self, status, result)
 

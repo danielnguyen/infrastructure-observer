@@ -11,7 +11,7 @@ import unittest
 
 from infrastructure_observer.observer import FixtureProvider, Observer
 from infrastructure_observer.service import (
-    AuthenticatedAPIServer, GatewayClient, LocalGatewayServer, _token_from_file,
+    AuthenticatedAPIServer, GatewayClient, LocalGatewayServer, RequestLimiter, _token_from_file,
     permitted_observation_path,
 )
 
@@ -130,6 +130,28 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(os.stat(self.directory / 'gateway.sock').st_mode), 0o660)
         with self.assertRaises(FileExistsError):
             LocalGatewayServer(str(self.directory / 'gateway.sock'), Observer('example-host-a', self.provider))
+
+    def test_rate_limit_is_shared_and_refills_without_consulting_gateway(self):
+        now = [100.0]
+        self.api.request_limiter = RequestLimiter(
+            capacity=2, refill_per_second=1.0, clock=lambda: now[0]
+        )
+        self.assertEqual(self.request('GET', '/v1/containers', TOKEN)[0], 200)
+        self.assertEqual(self.request('GET', '/v1/containers', TOKEN)[0], 200)
+        requests = self.provider.inventory_requests
+        status, body, _ = self.request('GET', '/v1/containers', TOKEN)
+        self.assertEqual(status, 429)
+        self.assertEqual(body, {'error': 'RATE_LIMIT', 'partial': True})
+        self.assertEqual(self.provider.inventory_requests, requests)
+        self.assertEqual(self.request('GET', '/v1/containers', 'bad')[0], 401)
+        self.assertEqual(self.provider.inventory_requests, requests)
+        now[0] += 1.0
+        self.assertEqual(self.request('GET', '/v1/containers', TOKEN)[0], 200)
+        self.assertEqual(self.provider.inventory_requests, requests + 1)
+
+    def test_maximum_length_api_credential_is_accepted(self):
+        self.api.api_token = 'x' * 256
+        self.assertEqual(self.request('GET', '/v1/containers', 'x' * 256)[0], 200)
 
     def test_path_grammar(self):
         self.assertTrue(permitted_observation_path('/v1/health'))
