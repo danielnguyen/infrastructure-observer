@@ -100,7 +100,7 @@ def assert_reader_recovers_from_crash() -> None:
     before = inspect('reader')
     cid = before['Id']
     count = before['RestartCount']
-    subprocess.run(
+    attempt = subprocess.run(
         ['sudo', 'docker', 'exec', cid, 'python3', '-c',
          "import os,signal; os.kill(1,signal.SIGKILL)"],
         text=True, capture_output=True, timeout=12, check=False,
@@ -116,7 +116,19 @@ def assert_reader_recovers_from_crash() -> None:
         except (OSError, subprocess.CalledProcessError, AssertionError, TimeoutError):
             pass
         time.sleep(0.5)
-    raise AssertionError('reader did not recover its IPC socket after a process crash')
+    state = subprocess.run(
+        ['sudo', 'docker', 'inspect', '--format', '{{.State.Status}} {{.State.ExitCode}} {{.State.Error}} {{.RestartCount}}', cid],
+        capture_output=True, text=True, timeout=12,
+    )
+    reader_logs = subprocess.run(
+        ['sudo', 'docker', 'logs', '--tail', '25', cid],
+        capture_output=True, text=True, timeout=12,
+    )
+    raise AssertionError(
+        'reader did not recover after PID 1 termination: '
+        + f'exec_code={attempt.returncode} exec_stderr={attempt.stderr[-200:]} '
+        + f'state={state.stdout[-300:]} logs={reader_logs.stderr[-900:]}'
+    )
 
 
 def main() -> None:
