@@ -47,7 +47,8 @@ def main() -> None:
         time.sleep(0.3)
     else:
         raise AssertionError("HTTPS observer did not become ready")
-    assert body["ready"] is True
+    assert body["gateway_reachable"] is True
+    assert body["docker_checked"] is False
     assert request("/v1/health", authorized=False)[0] == 401
     assert request("/v1/containers")[0] == 200
     assert request("/v1/projects/synthetic-unapproved/logs?since_minutes=5&limit=5")[0] == 403
