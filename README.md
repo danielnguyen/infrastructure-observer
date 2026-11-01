@@ -41,3 +41,32 @@ Details and acceptance gates are in [planning/IPC_TRUST_BOUNDARY.md](planning/IP
 ## Docker Engine integration checks
 
 The [Docker integration workflow](.github/workflows/docker-integration.yml) runs the application tests and exercises real Docker Engine behavior on a disposable GitHub-hosted Linux runner. The integration harness creates temporary containers, runs the observation API as an unprivileged OS user, checks Docker socket isolation and authorization, then removes its containers. See [testing details](planning/REAL_DOCKER_VALIDATION.md).
+
+## Read-only container status command
+
+Select one Observer HTTPS origin explicitly. This standard-library client makes
+one authenticated `GET /v1/containers` request, with verified certificates and
+hostnames, a 5-second socket timeout, a 256 KiB response cap, and no redirects.
+Use a private regular token file (mode 0600); never pass the token itself as an
+argument. `--ca-cert` can be omitted to use the system CA trust store.
+
+```sh
+python3 -m infrastructure_observer.status \
+  --url https://observer.example:8765 \
+  --ca-cert /path/to/ca.pem --token-file /path/to/token
+```
+
+This synthetic example does not select a live endpoint. The report shows the
+endpoint's host and UTC observation time, sorts containers by Compose project
+then name/ID, and includes runtime, health-check state, and exception totals.
+Unknown/unlabelled projects have their own group. A null health field means
+“no health check reported”, never “healthy”; the API cannot prove why that
+signal is absent. Names are bounded and terminal controls are removed.
+
+Exit codes: `0` means a complete report with no flagged problems (including an
+explicitly empty inventory); `1` means a complete report with non-running,
+unhealthy, starting, or unknown container/project/name/health states; `2` means
+invalid arguments or unavailable, invalid, or partial observation data. A running
+container with no reported health check is counted separately and does not alone
+cause exit `1`. No exit code establishes application health. Failure diagnostics
+omit endpoint bodies, credentials, and raw exception details.

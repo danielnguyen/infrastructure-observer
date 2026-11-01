@@ -269,7 +269,7 @@ def _api_handler():
 
 
 def _token_from_file(path: str) -> str:
-    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_CLOEXEC', 0)
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, 'O_NOFOLLOW', 0) | getattr(os, 'O_CLOEXEC', 0)
     fd = os.open(path, flags)
     try:
         info = os.fstat(fd)
