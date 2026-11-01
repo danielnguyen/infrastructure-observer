@@ -39,6 +39,9 @@ def fetch(url, ca_cert, token):
         raw = response.read(MAX_RESPONSE_BYTES + 1)
         if len(raw) > MAX_RESPONSE_BYTES:
             raise ValueError('response limit')
+        # Bounded reads do not raise IncompleteRead on premature EOF.
+        if response.length not in (None, 0):
+            raise ValueError('incomplete response body')
         return json.loads(raw, object_pairs_hook=unique_object, parse_constant=invalid_constant)
     finally:
         connection.close()
@@ -92,20 +95,21 @@ def validate(value):
     return observed
 
 
-def safe(value):
+def safe(value, token):
     """Bound terminal fields and remove control, bidi and non-ASCII characters."""
+    value = value.replace(token, '[REDACTED]')
     return ''.join(c if ' ' <= c <= '~' else '?' for c in value[:80]) + ('...' if len(value) > 80 else '')
 
 
 def report(value, token):
     observed = validate(value)
     rows = value['containers']
-    lines = [f"Host: {value['host']} | Observed: {observed.isoformat()} (UTC)"]
+    lines = [f"Host: {safe(value['host'], token)} | Observed: {observed.isoformat()} (UTC)"]
     flagged = no_check = unhealthy = not_running = unknown = 0
     previous = object()
     for row in sorted(rows, key=lambda r: (r['project'] is None, r['project'] or '', r['name'] or '', r['id'])):
         if row['project'] != previous:
-            lines.append('\nProject: ' + (row['project'] if row['project'] is not None else '[unknown/unlabelled]'))
+            lines.append('\nProject: ' + (safe(row['project'], token) if row['project'] is not None else '[unknown/unlabelled]'))
             previous = row['project']
         state = row['status']
         known = state in ('running', 'exited', 'dead', 'paused', 'restarting', 'created', 'removing')
@@ -122,12 +126,12 @@ def report(value, token):
         runtime = state if known else 'unknown/unavailable'
         health_text = ('no health check reported' if health is None else
                        health if health_known else 'unknown/unavailable')
-        lines.append(f"  {safe(row['name'] or '[unknown name]')} [{row['id'][:12]}]  runtime={runtime}  health={health_text}")
+        lines.append(f"  {safe(row['name'] or '[unknown name]', token)} [{safe(row['id'], token)[:12]}]  runtime={runtime}  health={health_text}")
     if not rows:
         lines.append('Inventory is empty (0 containers).')
     lines.append(f'\nTotal: {len(rows)} containers; {flagged} flagged; {not_running} not running; '
                  f'{unhealthy} unhealthy; {unknown} unknown; {no_check} with no health check reported.')
-    # Even a malicious endpoint reflecting the credential cannot print it.
+    # Retain final redaction as defense in depth after per-field redaction.
     return '\n'.join(lines).replace(token, '[REDACTED]'), int(flagged > 0)
 
 

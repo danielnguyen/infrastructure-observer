@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 from pathlib import Path
@@ -107,6 +108,18 @@ class ReportTests(unittest.TestCase):
             self.assertNotIn(control, text)
         self.assertLess(max(map(len, text.splitlines())), 200)
 
+    def test_redact_before_name_and_id_truncation(self):
+        for token, prefix in ((TOKEN, 'prefix-' * 5), ('long-secret-' * 12, ''),
+                              ('abcdef01' * 8, '')):
+            with self.subTest(length=len(token), prefix=prefix):
+                value = inventory()
+                value['containers'][0]['name'] = prefix + token
+                if len(token) == 64:
+                    value['containers'][0]['id'] = token
+                text, _ = status.report(value, token)
+                self.assertNotIn(token[:12], text)
+                self.assertIn('[REDACTED]', text)
+
 
 class ClientTests(unittest.TestCase):
     def setUp(self):
@@ -128,6 +141,7 @@ class ClientTests(unittest.TestCase):
             connection = factory.return_value
             response = connection.getresponse.return_value
             response.status = 200
+            response.length = 0
             response.read.return_value = json.dumps(inventory()).encode()
             self.assertEqual(self.run_cli()[0], 1)
             args, kwargs = factory.call_args
@@ -156,6 +170,7 @@ class ClientTests(unittest.TestCase):
             with self.subTest(raw=raw[:10]), patch.object(status.http.client, 'HTTPSConnection') as factory:
                 response = factory.return_value.getresponse.return_value
                 response.status, response.read.return_value = 200, raw
+                response.length = 0
                 self.assertEqual(self.run_cli()[0], 2)
 
     def test_network_errors_suppressed(self):
@@ -230,6 +245,60 @@ class TLSIntegrationTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         status.fetch(url, cert, token)
                 gateway.request.assert_called_once()
+            finally:
+                api.shutdown()
+                api.server_close()
+                thread.join(2)
+
+    def test_real_cli_rejects_premature_eof(self):
+        value = inventory()
+        value['containers'] = [value['containers'][0]]
+        body = json.dumps(value).encode()
+
+        class Handler(BaseHTTPRequestHandler):
+            extra_length = 0
+
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header('Content-Length', str(len(body) + self.extra_length))
+                self.end_headers()
+                self.wfile.write(body)
+                self.close_connection = True
+
+            def log_message(self, *args):
+                pass
+
+        with tempfile.TemporaryDirectory() as root:
+            cert, key = str(Path(root) / 'cert.pem'), str(Path(root) / 'key.pem')
+            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+                            '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost',
+                            '-days', '1', '-keyout', key, '-out', cert],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8, check=True)
+            token_file = Path(root) / 'token'
+            token_file.write_text(TOKEN)
+            token_file.chmod(0o600)
+            api = HTTPServer(('127.0.0.1', 0), Handler)
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(cert, key)
+            api.socket = context.wrap_socket(api.socket, server_side=True)
+            thread = threading.Thread(target=api.serve_forever, daemon=True)
+            thread.start()
+            try:
+                for extra, expected in ((0, 0), (100, 2)):
+                    with self.subTest(extra_length=extra):
+                        Handler.extra_length = extra
+                        result = subprocess.run([
+                            'python3', '-m', 'infrastructure_observer.status',
+                            '--url', f'https://localhost:{api.server_port}',
+                            '--ca-cert', cert, '--token-file', str(token_file)],
+                            capture_output=True, text=True, timeout=10)
+                        self.assertEqual(result.returncode, expected)
+                        if extra:
+                            self.assertEqual(result.stdout, '')
+                            self.assertIn('Observation unavailable', result.stderr)
+                        else:
+                            self.assertIn('0 flagged', result.stdout)
+                        self.assertNotIn(TOKEN, result.stdout + result.stderr)
             finally:
                 api.shutdown()
                 api.server_close()
